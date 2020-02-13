@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nfsclient
+spec:
+  selector:
+    matchLabels:
+      app: nfsclient
+  template:
+    metadata:
+      labels:
+        app: nfsclient
+    spec:
+      containers:
+      - name: nfsclient
+        image: mrghort/ubutil:latest
+        command: ["sleep","3600"]
+        volumeMounts:
+        - name: data
+          mountPath: "/data"
+      volumes:
+      - name: data
+        nfs: 
+          # cannot use service name here because this step happens at kubelet, which doesn't have access to kube-dns somehow
+          # so you have to manually put the ip of the nfs server service
+          #server: nfsshare.mpackard01.svc.cluster.local
+          server: x.y.z.q
+          path: /
+
+
+
+
+
