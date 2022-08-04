@@ -1,0 +1,85 @@
+#!/usr/bin/python3
+
+import os
+import base64
+import sys
+import argparse
+import jinja2
+import kubernetes
+import subprocess
+import re
+
+# parse cli args
+parser = argparse.ArgumentParser()
+parser.add_argument("user")
+args = parser.parse_args()
+
+
+# grab the kube server out of ~/.kube/config
+home = os.path.expanduser("~")
+with open(home+"/.kube/config") as f:
+  for line in f:
+    m = re.search("(server:) (.*)",line)
+    if m:
+      _kubeurl = m.group(2)
+
+if not _kubeurl:
+  print("Could not find kube server address in ~/.kube/config. Exiting.")
+  sys.exit(1)
+
+# use default config (~/.kube/config I think)
+kubernetes.config.load_kube_config()
+
+v1 = kubernetes.client.CoreV1Api()
+
+# get namespaces
+ns=[]
+for n in v1.list_namespace().items:
+  ns.append(n.metadata.name)
+
+# if namespace does not exist, create it
+if args.user not in ns:
+  nsobj = {'metadata': {'name': args.user}, 'kind': 'Namespace'}
+  v1.create_namespace(nsobj)
+
+# create rolebinding so default service account for new namespace can do stuff
+p2 = subprocess.Popen("kubectl create rolebinding %s --clusterrole=admin --serviceaccount=%s:default --namespace=%s" % (args.user, args.user, args.user), shell=True, stdout=subprocess.PIPE).communicate()[0]
+#print(p2.decode("utf-8"))
+
+# get default service account token for namespace
+for sa in v1.list_namespaced_secret(namespace=args.user).items:
+  #print(sa)
+  #tmp1 = sa.metadata.name
+  if "default-token-" in sa.metadata.name:
+    tmp1 = base64.decodebytes(sa.data['token'].encode())
+    user_token = tmp1.decode()
+
+# template for ~/.kube/config for new namespace user
+kube_config_template = '''
+---
+apiVersion: v1
+clusters:
+- cluster:
+    server: {{ kubeurl }}
+    insecure-skip-tls-verify: true
+  name: kubernetes
+contexts:
+- context:
+    cluster: kubernetes
+    namespace: {{ kubeuser }}
+    user: default
+  name: {{ kubeuser }}
+current-context: {{ kubeuser }}
+kind: Config
+preferences: {}
+users:
+- name: default
+  user:
+    token: {{ kubetoken }}
+'''
+
+# print out user's ~/.kube/config file
+templateEnv = jinja2.Environment(loader=jinja2.BaseLoader).from_string(kube_config_template)
+print("Put this in user's ~/.kube/config")
+print(templateEnv.render(kubeurl=_kubeurl, kubeuser=args.user, kubetoken=user_token))
+
